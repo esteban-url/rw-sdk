@@ -11,6 +11,7 @@ import {
 import { type Plugin } from "vite";
 import { normalizeModulePath } from "../lib/normalizeModulePath.mjs";
 import { stripBase } from "../lib/stripBase.mjs";
+import { VIRTUAL_SSR_PREFIX } from "./ssrBridgePlugin.mjs";
 
 const log = debug("rwsdk:vite:transform-jsx-script-tags");
 
@@ -544,6 +545,10 @@ export const transformJsxScriptTagsPlugin = ({
 
       if (
         this.environment?.name === "worker" &&
+        // Skip SSR-bridge modules: their ids end in `.tsx` but the code is
+        // already SSR-transformed, so re-running here injects a duplicate
+        // import → "Identifier '__vite_ssr_import_0__' has already been declared".
+        !id.includes(VIRTUAL_SSR_PREFIX) &&
         id.endsWith(".tsx") &&
         hasJsxFunctions(code)
       ) {

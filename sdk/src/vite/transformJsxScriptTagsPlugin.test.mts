@@ -1,7 +1,11 @@
 import ts from "typescript";
 import { beforeEach, describe, expect, it } from "vitest";
 import stubEnvVars from "../lib/testUtils/stubEnvVars.mjs";
-import { transformJsxScriptTagsCode } from "./transformJsxScriptTagsPlugin.mjs";
+import {
+  transformJsxScriptTagsCode,
+  transformJsxScriptTagsPlugin,
+} from "./transformJsxScriptTagsPlugin.mjs";
+import { VIRTUAL_SSR_PREFIX } from "./ssrBridgePlugin.mjs";
 
 // Helper function to normalize code formatting for test comparisons.
 function normalizeCode(code: string): string {
@@ -887,5 +891,43 @@ columnNumber: 2
     );
 
     expect(clientEntryPoints.has("/src/client.tsx")).toBe(true);
+  });
+});
+
+describe("transformJsxScriptTagsPlugin transform hook", () => {
+  // Server module rendering a <script>; crosses the SSR bridge as a
+  // `virtual:rwsdk:ssr:` id that still ends in `.tsx`. The hook must skip
+  // bridge ids (else a duplicate import crashes dev) but process the real one.
+  const moduleCode = `
+    export const Preview = () =>
+      jsx("div", { children: jsx("script", { src: "/widget.js", type: "module" }) });
+  `;
+
+  const runHook = (id: string, code = moduleCode) => {
+    const plugin = transformJsxScriptTagsPlugin({
+      clientEntryPoints: new Set<string>(),
+      projectRootDir: "/project/root/dir",
+    });
+    const transform = plugin.transform as unknown as (
+      this: { environment: { name: string } },
+      code: string,
+      id: string,
+    ) => Promise<{ code: string } | null>;
+    return transform.call({ environment: { name: "worker" } }, code, id);
+  };
+
+  it("processes a real worker .tsx module that renders a <script>", async () => {
+    const result = await runHook("/src/Preview.tsx");
+    expect(result?.code).toContain('import { requestInfo } from "rwsdk/worker"');
+  });
+
+  it("skips SSR-bridge modules to avoid a duplicate __vite_ssr_import_0__", async () => {
+    const result = await runHook(`${VIRTUAL_SSR_PREFIX}/src/Preview.tsx`);
+    expect(result).toBeNull();
+  });
+
+  it("also skips the /@id/-prefixed bridge id form", async () => {
+    const result = await runHook(`/@id/${VIRTUAL_SSR_PREFIX}/src/Preview.tsx`);
+    expect(result).toBeNull();
   });
 });
